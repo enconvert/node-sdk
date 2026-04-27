@@ -1,0 +1,15 @@
+src/
+tests/
+test_output/
+node_modules/
+.vitest/
+coverage/
+tsconfig.json
+tsup.config.ts
+vitest.config.ts
+.eslintrc*
+.prettierrc*
+.editorconfig
+.github/
+*.tsbuildinfo
+*.log

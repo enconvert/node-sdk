@@ -1,0 +1,71 @@
+{
+  "name": "enconvert",
+  "version": "0.0.1",
+  "description": "JavaScript / TypeScript SDK for the Enconvert file conversion API",
+  "license": "MIT",
+  "author": "Enconvert <support@enconvert.com>",
+  "homepage": "https://enconvert.com",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/enconvert/enconvert-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/enconvert/enconvert-js/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "keywords": [
+    "enconvert",
+    "pdf",
+    "screenshot",
+    "conversion",
+    "html-to-pdf",
+    "url-to-pdf",
+    "url-to-screenshot",
+    "url-to-markdown",
+    "image-convert",
+    "document-convert",
+    "heic-to-webp",
+    "docx-to-pdf",
+    "api",
+    "sdk"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test:sdk": "tsx tests/test_sdk.ts",
+    "lint:pkg": "publint && attw --pack .",
+    "prepublishOnly": "npm run build && npm run lint:pkg"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.17.0",
+    "@types/node": "^20.0.0",
+    "publint": "^0.3.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
