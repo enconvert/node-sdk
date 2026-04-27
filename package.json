@@ -1,5 +1,8 @@
 {
-  "name": "enconvert",
+  "name": "@enconvert/node-sdk",
+  "publishConfig": {
+      "access": "public"
+    },
   "version": "0.0.1",
   "description": "JavaScript / TypeScript SDK for the Enconvert file conversion API",
   "license": "MIT",
@@ -7,10 +10,7 @@
   "homepage": "https://enconvert.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/enconvert/enconvert-js.git"
-  },
-  "bugs": {
-    "url": "https://github.com/enconvert/enconvert-js/issues"
+    "url": "git+https://github.com/conversionapi/node-sdk.git"
   },
   "type": "module",
   "main": "./dist/index.cjs",

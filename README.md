@@ -7,13 +7,13 @@ Convert URLs to PDFs, capture screenshots, transform images, and convert documen
 ## Install
 
 ```bash
-npm install enconvert
+npm install @enconvert/node-sdk
 ```
 
 ## Quick Start
 
 ```ts
-import { Enconvert } from "enconvert";
+import { Enconvert } from "@enconvert/node-sdk";
 
 const client = new Enconvert({ apiKey: "sk_..." });
 ```
@@ -91,7 +91,7 @@ const result = await client.convertUrlToPdf("https://example.com", {
 ## Error Handling
 
 ```ts
-import { Enconvert, AuthenticationError, RateLimitError, APIError } from "enconvert";
+import { Enconvert, AuthenticationError, RateLimitError, APIError } from "@enconvert/node-sdk";
 
 try {
   await client.convertUrlToPdf("https://example.com");
