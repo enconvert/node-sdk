@@ -34,3 +34,15 @@ export class RateLimitError extends APIError {
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
+
+/**
+ * Plan or quota gate (HTTP 402). V2 endpoints raise this when the feature
+ * is not enabled on the plan or the monthly quota is exhausted.
+ */
+export class QuotaError extends APIError {
+  constructor(message = "Plan feature not enabled or quota exhausted") {
+    super(402, message);
+    this.name = "QuotaError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}

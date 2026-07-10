@@ -4,13 +4,24 @@ import { createWriteStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 
-import { APIError, AuthenticationError, RateLimitError } from "./errors.js";
+import { APIError } from "./errors.js";
+import {
+  DOCUMENT_FORMATS,
+  IMAGE_FORMATS,
+  assertConversionImplemented,
+  mimeFor,
+  normalizeOutputFormat,
+  resolveInputFormat,
+} from "./formats.js";
+import { newJobId, raiseForStatus, serializePdfOptions, sleep } from "./internal.js";
+import { EnconvertV2 } from "./v2.js";
 import type {
+  BatchStatus,
+  BatchSubmission,
   ClientOptions,
   ConversionResult,
   ConvertDocumentOptions,
@@ -18,85 +29,26 @@ import type {
   FileInput,
   JobStatus,
   PdfOptions,
+  UrlRenderOptions,
   UrlToMarkdownOptions,
   UrlToPdfOptions,
   UrlToScreenshotOptions,
+  WaitForBatchOptions,
+  WebsiteConversionOptions,
+  WebsiteToPdfOptions,
+  WebsiteToScreenshotOptions,
 } from "./types.js";
 
 const DEFAULT_BASE_URL = "https://api.enconvert.com";
 const DEFAULT_TIMEOUT_MS = 300_000;
-
-// Extension -> API format name (mirror of Python SDK)
-const IMAGE_FORMATS: Record<string, string> = {
-  ".jpg": "jpeg",
-  ".jpeg": "jpeg",
-  ".png": "png",
-  ".svg": "svg",
-  ".heic": "heic",
-  ".webp": "webp",
-};
-
-const DOCUMENT_FORMATS: Record<string, string> = {
-  ".doc": "doc",
-  ".docx": "doc",
-  ".xls": "excel",
-  ".xlsx": "excel",
-  ".ppt": "ppt",
-  ".pptx": "ppt",
-  ".html": "html",
-  ".htm": "html",
-  ".odt": "odt",
-  ".ods": "ods",
-  ".odp": "odp",
-  ".ots": "ots",
-  ".pages": "pages",
-  ".numbers": "numbers",
-  ".epub": "epub",
-  ".md": "markdown",
-  ".markdown": "markdown",
-  ".csv": "csv",
-  ".json": "json",
-  ".xml": "xml",
-  ".yaml": "yaml",
-  ".yml": "yaml",
-  ".toml": "toml",
-};
-
-const MIME_BY_EXT: Record<string, string> = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".svg": "image/svg+xml",
-  ".heic": "image/heic",
-  ".webp": "image/webp",
-  ".pdf": "application/pdf",
-  ".doc": "application/msword",
-  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  ".xls": "application/vnd.ms-excel",
-  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  ".ppt": "application/vnd.ms-powerpoint",
-  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-  ".html": "text/html",
-  ".htm": "text/html",
-  ".odt": "application/vnd.oasis.opendocument.text",
-  ".ods": "application/vnd.oasis.opendocument.spreadsheet",
-  ".odp": "application/vnd.oasis.opendocument.presentation",
-  ".epub": "application/epub+zip",
-  ".md": "text/markdown",
-  ".markdown": "text/markdown",
-  ".csv": "text/csv",
-  ".json": "application/json",
-  ".xml": "application/xml",
-  ".yaml": "application/x-yaml",
-  ".yml": "application/x-yaml",
-  ".toml": "application/toml",
-};
+const DEFAULT_BATCH_POLL_INTERVAL_MS = 5_000;
+const DEFAULT_BATCH_TIMEOUT_MS = 1_800_000;
 
 /**
  * Enconvert file conversion client (Node 18+).
  *
  * @example
- *   import { Enconvert } from "enconvert";
+ *   import { Enconvert } from "@enconvert/node-sdk";
  *   const client = new Enconvert({ apiKey: "sk_..." });
  *   const result = await client.convertUrlToPdf("https://example.com");
  *   console.log(result.presignedUrl);
@@ -106,30 +58,29 @@ export class Enconvert {
   private readonly baseUrl: string;
   private readonly timeout: number;
 
+  /**
+   * V2 API namespace: perceive, discover, lookup, distill, ingest, watch.
+   * Requires a private API key; endpoints are plan-gated (QuotaError on 402).
+   */
+  readonly v2: EnconvertV2;
+
   constructor(opts: ClientOptions) {
     if (!opts?.apiKey) throw new Error("Enconvert: 'apiKey' is required");
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.v2 = new EnconvertV2((path, init) => this.fetch(path, init));
   }
 
   // ------------------------------------------------------------------
-  // URL conversions
+  // URL conversions (single page)
   // ------------------------------------------------------------------
 
   /** Convert a URL to PDF. */
   async convertUrlToPdf(url: string, opts: UrlToPdfOptions = {}): Promise<ConversionResult> {
-    const body: Record<string, unknown> = {
-      url,
-      direct_download: false,
-      single_page: opts.singlePage ?? true,
-      viewport_width: opts.viewportWidth ?? 1920,
-      viewport_height: opts.viewportHeight ?? 1080,
-      load_media: opts.loadMedia ?? true,
-      enable_scroll: opts.enableScroll ?? true,
-    };
+    const body = buildUrlBody(url, opts);
+    body.single_page = opts.singlePage ?? true;
     if (opts.pdfOptions) body.pdf_options = serializePdfOptions(opts.pdfOptions);
-    if (opts.outputFilename) body.output_filename = opts.outputFilename;
 
     const data = await this.postJson("/v1/convert/url-to-pdf", body);
     const result = toConversionResult(data);
@@ -142,15 +93,7 @@ export class Enconvert {
     url: string,
     opts: UrlToScreenshotOptions = {},
   ): Promise<ConversionResult> {
-    const body: Record<string, unknown> = {
-      url,
-      direct_download: false,
-      viewport_width: opts.viewportWidth ?? 1920,
-      viewport_height: opts.viewportHeight ?? 1080,
-      load_media: opts.loadMedia ?? true,
-      enable_scroll: opts.enableScroll ?? true,
-    };
-    if (opts.outputFilename) body.output_filename = opts.outputFilename;
+    const body = buildUrlBody(url, opts);
 
     const data = await this.postJson("/v1/convert/url-to-screenshot", body);
     const result = toConversionResult(data);
@@ -167,15 +110,7 @@ export class Enconvert {
     url: string,
     opts: UrlToMarkdownOptions = {},
   ): Promise<ConversionResult> {
-    const body: Record<string, unknown> = {
-      url,
-      direct_download: false,
-      viewport_width: opts.viewportWidth ?? 1920,
-      viewport_height: opts.viewportHeight ?? 1080,
-      load_media: opts.loadMedia ?? true,
-      enable_scroll: opts.enableScroll ?? true,
-    };
-    if (opts.outputFilename) body.output_filename = opts.outputFilename;
+    const body = buildUrlBody(url, opts);
 
     const data = await this.postJson("/v1/convert/url-to-markdown", body);
     const result = toConversionResult(data);
@@ -184,21 +119,60 @@ export class Enconvert {
   }
 
   // ------------------------------------------------------------------
+  // Website conversions (async batch, whole-site crawl)
+  // ------------------------------------------------------------------
+
+  /**
+   * Convert every discovered page of a website to PDF. Async-only: pages are
+   * discovered via sitemap or full crawl (plan-dependent), converted in the
+   * background, and bundled into a single ZIP. Poll with getBatchStatus or
+   * block with waitForBatch. Requires a private API key with crawl access.
+   */
+  async convertWebsiteToPdf(
+    url: string,
+    opts: WebsiteToPdfOptions = {},
+  ): Promise<BatchSubmission> {
+    const body = buildWebsiteBody(url, opts);
+    if (opts.singlePage !== undefined) body.single_page = opts.singlePage;
+    if (opts.pdfOptions) body.pdf_options = serializePdfOptions(opts.pdfOptions);
+
+    // No job-polling fallback: website submissions have no per-job row, so a
+    // 5xx here means the submission itself failed and must surface directly.
+    const data = await this.postJson("/v1/convert/website-to-pdf", body, { jobFallback: false });
+    return toBatchSubmission(data);
+  }
+
+  /**
+   * Screenshot every discovered page of a website (PNG). Async-only, bundled
+   * into a single ZIP. Poll with getBatchStatus or block with waitForBatch.
+   * Requires a private API key with crawl access.
+   */
+  async convertWebsiteToScreenshot(
+    url: string,
+    opts: WebsiteToScreenshotOptions = {},
+  ): Promise<BatchSubmission> {
+    const body = buildWebsiteBody(url, opts);
+
+    const data = await this.postJson("/v1/convert/website-to-screenshot", body, {
+      jobFallback: false,
+    });
+    return toBatchSubmission(data);
+  }
+
+  // ------------------------------------------------------------------
   // File conversions
   // ------------------------------------------------------------------
 
-  /** Convert an image between formats (jpeg, png, svg, heic, webp). */
+  /**
+   * Convert an image between formats (jpeg, png, svg, heic, webp), or
+   * rasterize a PDF to JPEG. Only pairs implemented by the API are accepted;
+   * unsupported pairs throw before any request is made.
+   */
   async convertImage(file: FileInput, opts: ConvertImageOptions): Promise<ConversionResult> {
     const part = await this.toFilePart(file);
-    const inputFormat = resolveFormat(part.filename, IMAGE_FORMATS);
-    const outputFmt = opts.outputFormat.toLowerCase().replace(/^\./, "");
-    const supported = Array.from(new Set(Object.values(IMAGE_FORMATS))).sort();
-    if (!supported.includes(outputFmt)) {
-      throw new Error(
-        `Unsupported output format '${opts.outputFormat}'. Supported: ${supported.join(", ")}`,
-      );
-    }
-    const endpoint = `/v1/convert/${inputFormat}-to-${outputFmt}`;
+    const inputFormat = resolveInputFormat(part.filename, IMAGE_FORMATS);
+    const outputFmt = normalizeOutputFormat(opts.outputFormat);
+    const endpoint = `/v1/convert/${assertConversionImplemented(inputFormat, outputFmt)}`;
     const data = await this.postFile(endpoint, part, { outputFilename: opts.outputFilename });
     const result = toConversionResult(data);
     if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
@@ -206,17 +180,19 @@ export class Enconvert {
   }
 
   /**
-   * Convert a document (doc, excel, ppt, html, epub, markdown, csv, json,
-   * xml, yaml, toml).
+   * Convert a document (doc, excel, ppt, odt, ods, odp, ots, pages, numbers,
+   * epub, html, markdown, csv, json, xml, yaml, toml). Output defaults to
+   * pdf. Only pairs implemented by the API are accepted; unsupported pairs
+   * throw before any request is made.
    */
   async convertDocument(
     file: FileInput,
     opts: ConvertDocumentOptions = {},
   ): Promise<ConversionResult> {
     const part = await this.toFilePart(file);
-    const inputFormat = resolveFormat(part.filename, DOCUMENT_FORMATS);
-    const outputFmt = (opts.outputFormat ?? "pdf").toLowerCase().replace(/^\./, "");
-    const endpoint = `/v1/convert/${inputFormat}-to-${outputFmt}`;
+    const inputFormat = resolveInputFormat(part.filename, DOCUMENT_FORMATS);
+    const outputFmt = normalizeOutputFormat(opts.outputFormat ?? "pdf");
+    const endpoint = `/v1/convert/${assertConversionImplemented(inputFormat, outputFmt)}`;
     const data = await this.postFile(endpoint, part, {
       outputFilename: opts.outputFilename,
       pdfOptions: opts.pdfOptions,
@@ -227,7 +203,7 @@ export class Enconvert {
   }
 
   // ------------------------------------------------------------------
-  // Job status
+  // Job + batch status
   // ------------------------------------------------------------------
 
   /** Poll the status of an async conversion job. */
@@ -238,14 +214,61 @@ export class Enconvert {
     return toJobStatus(data);
   }
 
+  /**
+   * Get the status of an async batch (website conversion). Returns aggregate
+   * counts, per-URL statuses, and download URLs. Private API keys only.
+   */
+  async getBatchStatus(batchId: string): Promise<BatchStatus> {
+    const resp = await this.fetch(`/v1/convert/batch/${batchId}`, { method: "GET" });
+    await raiseForStatus(resp);
+    const data = (await resp.json()) as Record<string, unknown>;
+    return toBatchStatus(data);
+  }
+
+  /**
+   * Poll a batch until it leaves "processing", then return its final status.
+   * With `saveTo`, downloads the batch ZIP once available. Throws APIError
+   * 504 on timeout.
+   */
+  async waitForBatch(batchId: string, opts: WaitForBatchOptions = {}): Promise<BatchStatus> {
+    const intervalMs = opts.intervalMs ?? DEFAULT_BATCH_POLL_INTERVAL_MS;
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_BATCH_TIMEOUT_MS;
+    const deadline = Date.now() + timeoutMs;
+
+    for (;;) {
+      const status = await this.getBatchStatus(batchId);
+      if (status.status !== "processing") {
+        if (opts.saveTo) {
+          if (!status.zipDownloadUrl) {
+            throw new APIError(
+              500,
+              `Batch ${batchId} finished with status '${status.status}' but no ZIP is available to save`,
+            );
+          }
+          await this.download(status.zipDownloadUrl, opts.saveTo);
+        }
+        return status;
+      }
+      if (Date.now() >= deadline) {
+        throw new APIError(504, `Batch ${batchId} did not complete within ${timeoutMs}ms`);
+      }
+      await sleep(intervalMs);
+    }
+  }
+
   // ------------------------------------------------------------------
   // Internal helpers (mirror of Python _post_json / _post_file / _poll_job /
   // _download / _resolve_format / _raise_for_status)
   // ------------------------------------------------------------------
 
-  private async postJson(endpoint: string, body: Record<string, unknown>): Promise<unknown> {
-    const jobId = newJobId();
-    body.job_id = jobId;
+  private async postJson(
+    endpoint: string,
+    body: Record<string, unknown>,
+    opts: { jobFallback?: boolean } = {},
+  ): Promise<unknown> {
+    const jobFallback = opts.jobFallback ?? true;
+    const jobId = jobFallback ? newJobId() : undefined;
+    if (jobId) body.job_id = jobId;
     try {
       const resp = await this.fetch(endpoint, {
         method: "POST",
@@ -253,9 +276,12 @@ export class Enconvert {
         body: JSON.stringify(body),
       });
       await raiseForStatus(resp);
-      return await resp.json();
+      const data = (await resp.json()) as Record<string, unknown>;
+      // Some success responses omit job_id (URL sync path); backfill the
+      // client-generated id so callers can still poll getJobStatus with it.
+      return jobId ? { job_id: jobId, ...data } : data;
     } catch (e) {
-      if (e instanceof APIError && e.statusCode >= 500) return this.pollJob(jobId);
+      if (jobId && e instanceof APIError && e.statusCode >= 500) return this.pollJob(jobId);
       throw e;
     }
   }
@@ -277,7 +303,8 @@ export class Enconvert {
     try {
       const resp = await this.fetch(endpoint, { method: "POST", body: form });
       await raiseForStatus(resp);
-      return await resp.json();
+      const data = (await resp.json()) as Record<string, unknown>;
+      return { job_id: jobId, ...data };
     } catch (e) {
       if (e instanceof APIError && e.statusCode >= 500) return this.pollJob(jobId);
       throw e;
@@ -364,43 +391,59 @@ interface FilePart {
   contentType: string;
 }
 
-function extOf(name: string): string {
-  const i = name.lastIndexOf(".");
-  return i === -1 ? "" : name.slice(i).toLowerCase();
+/** Request body shared by all single-URL conversions. */
+function buildUrlBody(url: string, opts: UrlRenderOptions): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    url,
+    direct_download: false,
+    viewport_width: opts.viewportWidth ?? 1920,
+    viewport_height: opts.viewportHeight ?? 1080,
+    load_media: opts.loadMedia ?? true,
+    enable_scroll: opts.enableScroll ?? true,
+  };
+  if (opts.outputFilename) body.output_filename = opts.outputFilename;
+  appendBrowserAccess(body, opts);
+  return body;
 }
 
-function mimeFor(name: string): string {
-  return MIME_BY_EXT[extOf(name)] ?? "application/octet-stream";
+/**
+ * Request body for website (whole-site) conversions. Render options are only
+ * sent when set — the gateway applies the same defaults per page.
+ */
+function buildWebsiteBody(url: string, opts: WebsiteConversionOptions): Record<string, unknown> {
+  const body: Record<string, unknown> = { url };
+  if (opts.crawlMode) body.crawl_mode = opts.crawlMode;
+  if (opts.includePatterns) body.include_patterns = opts.includePatterns;
+  if (opts.excludePatterns) body.exclude_patterns = opts.excludePatterns;
+  if (opts.notificationEmail) body.notification_email = opts.notificationEmail;
+  if (opts.callbackUrl) body.callback_url = opts.callbackUrl;
+  if (opts.outputFilename) body.output_filename = opts.outputFilename;
+  if (opts.viewportWidth !== undefined) body.viewport_width = opts.viewportWidth;
+  if (opts.viewportHeight !== undefined) body.viewport_height = opts.viewportHeight;
+  if (opts.loadMedia !== undefined) body.load_media = opts.loadMedia;
+  if (opts.enableScroll !== undefined) body.enable_scroll = opts.enableScroll;
+  appendBrowserAccess(body, opts);
+  return body;
 }
 
-function resolveFormat(name: string, map: Record<string, string>): string {
-  const ext = extOf(name);
-  const fmt = map[ext];
-  if (!fmt) {
-    const supported = Array.from(new Set(Object.keys(map))).sort().join(", ");
-    throw new Error(`Unsupported file extension '${ext}'. Supported: ${supported}`);
-  }
-  return fmt;
-}
-
-function serializePdfOptions(o: PdfOptions): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (o.pageSize !== undefined) out.page_size = o.pageSize;
-  if (o.orientation !== undefined) out.orientation = o.orientation;
-  if (o.margins !== undefined) out.margins = o.margins;
-  if (o.scale !== undefined) out.scale = o.scale;
-  if (o.grayscale !== undefined) out.grayscale = o.grayscale;
-  if (o.header !== undefined) out.header = o.header;
-  if (o.footer !== undefined) out.footer = o.footer;
-  return out;
+/** Attach the plan-gated auth/cookies/headers fields when provided. */
+function appendBrowserAccess(body: Record<string, unknown>, opts: UrlRenderOptions): void {
+  if (opts.auth) body.auth = opts.auth;
+  if (opts.cookies) body.cookies = opts.cookies;
+  if (opts.headers) body.headers = opts.headers;
 }
 
 function toConversionResult(data: unknown): ConversionResult {
   const d = data as Record<string, unknown>;
+  // Job-status fallback responses omit `filename`; recover it from the
+  // object key so callers never see the string "undefined".
+  const objectKey = typeof d.object_key === "string" ? d.object_key : "";
+  const filename =
+    typeof d.filename === "string" ? d.filename : objectKey.split("/").pop() ?? "";
   return {
     presignedUrl: String(d.presigned_url),
-    objectKey: String(d.object_key),
-    filename: String(d.filename),
+    objectKey,
+    filename,
     fileSize: typeof d.file_size === "number" ? d.file_size : undefined,
     conversionTimeSeconds:
       typeof d.conversion_time_seconds === "number" ? d.conversion_time_seconds : undefined,
@@ -417,24 +460,36 @@ function toJobStatus(data: Record<string, unknown>): JobStatus {
   };
 }
 
-async function raiseForStatus(resp: Response): Promise<void> {
-  if (resp.status < 400) return;
-  let message: string;
-  try {
-    const body = (await resp.clone().json()) as Record<string, unknown>;
-    message = (body.detail as string) || (body.error as string) || JSON.stringify(body);
-  } catch {
-    message = (await resp.text().catch(() => "")) || `HTTP ${resp.status}`;
-  }
-  if (resp.status === 401 || resp.status === 403) throw new AuthenticationError(message);
-  if (resp.status === 429) throw new RateLimitError(message);
-  throw new APIError(resp.status, message);
+function toBatchSubmission(data: unknown): BatchSubmission {
+  const d = data as Record<string, unknown>;
+  return {
+    batchId: String(d.batch_id),
+    status: typeof d.status === "string" ? d.status : "processing",
+    urlCount: typeof d.url_count === "number" ? d.url_count : 0,
+    totalDiscovered: typeof d.total_discovered === "number" ? d.total_discovered : undefined,
+    discoveryMethod: typeof d.discovery_method === "string" ? d.discovery_method : undefined,
+    outputFormat: typeof d.output_format === "string" ? d.output_format : undefined,
+  };
 }
 
-function newJobId(): string {
-  return randomUUID().replace(/-/g, "");
+function toBatchStatus(d: Record<string, unknown>): BatchStatus {
+  const rawItems = Array.isArray(d.items) ? (d.items as Record<string, unknown>[]) : [];
+  return {
+    batchId: String(d.batch_id),
+    status: d.status as BatchStatus["status"],
+    total: typeof d.total === "number" ? d.total : 0,
+    completed: typeof d.completed === "number" ? d.completed : 0,
+    failed: typeof d.failed === "number" ? d.failed : 0,
+    inProgress: typeof d.in_progress === "number" ? d.in_progress : 0,
+    outputMode: d.output_mode as BatchStatus["outputMode"],
+    zipDownloadUrl: typeof d.zip_download_url === "string" ? d.zip_download_url : undefined,
+    items: rawItems.map((item) => ({
+      sourceUrl: typeof item.source_url === "string" ? item.source_url : "",
+      status: typeof item.status === "string" ? item.status : "",
+      downloadUrl: typeof item.download_url === "string" ? item.download_url : undefined,
+      outputFileSize: typeof item.output_file_size === "number" ? item.output_file_size : undefined,
+      duration: typeof item.duration === "string" ? item.duration : undefined,
+    })),
+  };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
