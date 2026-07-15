@@ -374,7 +374,7 @@ export interface DistillResult {
 // Ingest
 // ---------------------------------------------------------------------------
 
-export type IngestMode = "urls" | "sitemap" | "crawl";
+export type IngestMode = "urls" | "sitemap" | "crawl" | "files";
 
 export type IngestStatus =
   | "queued"
@@ -409,6 +409,17 @@ export interface IngestOptions {
   respectRobots?: boolean;
   waitFor?: string;
   waitTimeoutMs?: number;
+  chunk?: IngestChunkOptions;
+  /** Completion webhook, HMAC-signed (see getWebhookSecret). */
+  webhookUrl?: string;
+}
+
+/**
+ * Options for `ingestFiles` (POST /v2/ingest/files). Uploaded documents are
+ * converted to Markdown and chunked through the same pipeline as `ingest`.
+ */
+export interface IngestFilesOptions {
+  /** Heading-aware chunker parameters. */
   chunk?: IngestChunkOptions;
   /** Completion webhook, HMAC-signed (see getWebhookSecret). */
   webhookUrl?: string;

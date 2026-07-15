@@ -1,9 +1,8 @@
 /** Enconvert API client. Node 18+ only. */
 
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { basename, dirname } from "node:path";
-import { Buffer } from "node:buffer";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
@@ -13,11 +12,17 @@ import {
   DOCUMENT_FORMATS,
   IMAGE_FORMATS,
   assertConversionImplemented,
-  mimeFor,
   normalizeOutputFormat,
   resolveInputFormat,
 } from "./formats.js";
-import { newJobId, raiseForStatus, serializePdfOptions, sleep } from "./internal.js";
+import {
+  newJobId,
+  raiseForStatus,
+  serializePdfOptions,
+  sleep,
+  toFilePart,
+  type FilePart,
+} from "./internal.js";
 import { EnconvertV2 } from "./v2.js";
 import type {
   BatchStatus,
@@ -26,6 +31,8 @@ import type {
   ConversionResult,
   ConvertDocumentOptions,
   ConvertImageOptions,
+  ConvertToMarkdownOptions,
+  ConvertToPdfOptions,
   FileInput,
   JobStatus,
   PdfOptions,
@@ -169,7 +176,7 @@ export class Enconvert {
    * unsupported pairs throw before any request is made.
    */
   async convertImage(file: FileInput, opts: ConvertImageOptions): Promise<ConversionResult> {
-    const part = await this.toFilePart(file);
+    const part = await toFilePart(file);
     const inputFormat = resolveInputFormat(part.filename, IMAGE_FORMATS);
     const outputFmt = normalizeOutputFormat(opts.outputFormat);
     const endpoint = `/v1/convert/${assertConversionImplemented(inputFormat, outputFmt)}`;
@@ -181,19 +188,58 @@ export class Enconvert {
 
   /**
    * Convert a document (doc, excel, ppt, odt, ods, odp, ots, pages, numbers,
-   * epub, html, markdown, csv, json, xml, yaml, toml). Output defaults to
-   * pdf. Only pairs implemented by the API are accepted; unsupported pairs
-   * throw before any request is made.
+   * html, markdown, csv, json, xml, yaml, toml). Output defaults to pdf. Only
+   * pairs implemented by the API are accepted; unsupported pairs throw before
+   * any request is made. (EPUB → use convertToPdf / convertToMarkdown.)
    */
   async convertDocument(
     file: FileInput,
     opts: ConvertDocumentOptions = {},
   ): Promise<ConversionResult> {
-    const part = await this.toFilePart(file);
+    const part = await toFilePart(file);
     const inputFormat = resolveInputFormat(part.filename, DOCUMENT_FORMATS);
     const outputFmt = normalizeOutputFormat(opts.outputFormat ?? "pdf");
     const endpoint = `/v1/convert/${assertConversionImplemented(inputFormat, outputFmt)}`;
     const data = await this.postFile(endpoint, part, {
+      outputFilename: opts.outputFilename,
+      pdfOptions: opts.pdfOptions,
+    });
+    const result = toConversionResult(data);
+    if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
+    return result;
+  }
+
+  /**
+   * Convert an uploaded file of (almost) any document format to clean Markdown
+   * — PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD, and legacy/ODF office.
+   * The format is auto-detected server-side; a RAG-ingestion building block.
+   * Images are not supported.
+   */
+  async convertToMarkdown(
+    file: FileInput,
+    opts: ConvertToMarkdownOptions = {},
+  ): Promise<ConversionResult> {
+    const part = await toFilePart(file);
+    const data = await this.postFile("/v1/convert/anything-to-markdown", part, {
+      outputFilename: opts.outputFilename,
+    });
+    const result = toConversionResult(data);
+    if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
+    return result;
+  }
+
+  /**
+   * Convert an uploaded file of (almost) any format to PDF — office/ODF/Pages/
+   * Numbers/RTF/CSV, HTML, Markdown, text, raster images, SVG, EPUB, or an
+   * existing PDF (passthrough/normalise). The format is auto-detected
+   * server-side. Only `pdfOptions.grayscale` is honored on this endpoint.
+   */
+  async convertToPdf(
+    file: FileInput,
+    opts: ConvertToPdfOptions = {},
+  ): Promise<ConversionResult> {
+    const part = await toFilePart(file);
+    const data = await this.postFile("/v1/convert/anything-to-pdf", part, {
       outputFilename: opts.outputFilename,
       pdfOptions: opts.pdfOptions,
     });
@@ -336,35 +382,6 @@ export class Enconvert {
     await pipeline(Readable.fromWeb(webStream), createWriteStream(dest));
   }
 
-  /** Convert a `FileInput` into a normalized `{ bytes, filename, contentType }`. */
-  private async toFilePart(file: FileInput): Promise<FilePart> {
-    if (typeof file === "string") {
-      const bytes = new Uint8Array(await readFile(file));
-      const filename = basename(file);
-      return { bytes, filename, contentType: mimeFor(filename) };
-    }
-    if (file instanceof Uint8Array || Buffer.isBuffer(file)) {
-      return {
-        bytes: file instanceof Uint8Array ? file : new Uint8Array(file),
-        filename: "upload.bin",
-        contentType: "application/octet-stream",
-      };
-    }
-    if (typeof file === "object" && file && "data" in file && "filename" in file) {
-      const wrapped = file;
-      const bytes =
-        wrapped.data instanceof Uint8Array ? wrapped.data : new Uint8Array(wrapped.data);
-      return {
-        bytes,
-        filename: wrapped.filename,
-        contentType: wrapped.contentType ?? mimeFor(wrapped.filename),
-      };
-    }
-    throw new Error(
-      "Unsupported file input. Pass a path string, Uint8Array/Buffer, or { data, filename }.",
-    );
-  }
-
   /** Centralized fetch with API key + timeout. */
   private async fetch(path: string, init: RequestInit): Promise<Response> {
     const ctrl = new AbortController();
@@ -384,12 +401,6 @@ export class Enconvert {
 // ----------------------------------------------------------------------
 // Module-level helpers (same role as Python's @staticmethod private helpers)
 // ----------------------------------------------------------------------
-
-interface FilePart {
-  bytes: Uint8Array;
-  filename: string;
-  contentType: string;
-}
 
 /** Request body shared by all single-URL conversions. */
 function buildUrlBody(url: string, opts: UrlRenderOptions): Record<string, unknown> {

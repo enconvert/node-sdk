@@ -12,7 +12,8 @@
  * raises QuotaError (HTTP 402).
  */
 
-import { raiseForStatus, serializePdfOptions, type RequestFn } from "./internal.js";
+import { raiseForStatus, serializePdfOptions, toFilePart, type RequestFn } from "./internal.js";
+import type { FileInput } from "./types.js";
 import type {
   CssField,
   CssSchema,
@@ -21,6 +22,7 @@ import type {
   DistillItem,
   DistillOptions,
   DistillResult,
+  IngestFilesOptions,
   IngestJob,
   IngestJobList,
   IngestJobSummary,
@@ -224,6 +226,29 @@ export class EnconvertV2 {
     }
     if (opts.webhookUrl !== undefined) body.webhook_url = opts.webhookUrl;
     return toIngestJob(await this.post("/v2/ingest", body));
+  }
+
+  /**
+   * Ingest one or more uploaded FILES into RAG-ready JSONL chunks — the file
+   * counterpart of ingest(), sharing the same job lifecycle (mode "files").
+   * PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD and legacy/ODF office are
+   * accepted. Always asynchronous; poll getIngestJob or configure a webhook.
+   */
+  async ingestFiles(files: FileInput[], opts: IngestFilesOptions = {}): Promise<IngestJob> {
+    if (!files?.length) throw new Error("ingestFiles: provide at least one file");
+    const form = new FormData();
+    for (const file of files) {
+      const part = await toFilePart(file);
+      form.append("files", new Blob([part.bytes], { type: part.contentType }), part.filename);
+    }
+    if (opts.chunk?.maxWords !== undefined) form.append("max_words", String(opts.chunk.maxWords));
+    if (opts.chunk?.sentenceOverlap !== undefined) {
+      form.append("sentence_overlap", String(opts.chunk.sentenceOverlap));
+    }
+    if (opts.webhookUrl !== undefined) form.append("webhook_url", opts.webhookUrl);
+    const resp = await this.request("/v2/ingest/files", { method: "POST", body: form });
+    await raiseForStatus(resp);
+    return toIngestJob((await resp.json()) as Record<string, unknown>);
   }
 
   /** List ingest jobs, newest first. */

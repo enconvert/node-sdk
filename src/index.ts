@@ -20,6 +20,8 @@ export type {
   ConversionResult,
   ConvertDocumentOptions,
   ConvertImageOptions,
+  ConvertToMarkdownOptions,
+  ConvertToPdfOptions,
   CrawlMode,
   FileInput,
   HttpBasicAuth,
@@ -50,6 +52,7 @@ export type {
   DistillOptions,
   DistillResult,
   IngestChunkOptions,
+  IngestFilesOptions,
   IngestJob,
   IngestJobList,
   IngestJobSummary,
@@ -91,4 +94,4 @@ export type {
   WebhookSecret,
 } from "./v2-types.js";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.1.1";

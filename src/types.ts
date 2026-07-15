@@ -132,6 +132,20 @@ export interface ConvertDocumentOptions {
   pdfOptions?: PdfOptions;
 }
 
+/** Options for `convertToMarkdown` (anything-to-markdown). */
+export interface ConvertToMarkdownOptions {
+  saveTo?: string;
+  outputFilename?: string;
+}
+
+/** Options for `convertToPdf` (anything-to-pdf). */
+export interface ConvertToPdfOptions {
+  saveTo?: string;
+  outputFilename?: string;
+  /** Only `grayscale` is honored by the anything-to-pdf endpoint. */
+  pdfOptions?: PdfOptions;
+}
+
 /**
  * URL discovery strategy for website conversions.
  * - "auto": highest mode the plan allows (default)

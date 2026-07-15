@@ -7,7 +7,7 @@
  * network round-trip for a guaranteed failure.
  */
 
-/** The 44 implemented `{input}-to-{output}` conversion endpoints. */
+/** The 43 implemented `{input}-to-{output}` conversion endpoints. */
 export const IMPLEMENTED_CONVERSIONS: ReadonlySet<string> = new Set([
   // Structured text (13)
   "json-to-xml",
@@ -23,7 +23,7 @@ export const IMPLEMENTED_CONVERSIONS: ReadonlySet<string> = new Set([
   "markdown-to-html",
   "markdown-to-pdf",
   "html-to-pdf",
-  // Documents (10)
+  // Documents (9) — EPUB→PDF now flows through anything-to-pdf, not a dedicated pair.
   "doc-to-pdf",
   "excel-to-pdf",
   "ppt-to-pdf",
@@ -33,7 +33,6 @@ export const IMPLEMENTED_CONVERSIONS: ReadonlySet<string> = new Set([
   "ots-to-pdf",
   "pages-to-pdf",
   "numbers-to-pdf",
-  "epub-to-pdf",
   // Images (21)
   "jpeg-to-png",
   "png-to-jpeg",
@@ -85,7 +84,7 @@ export const DOCUMENT_FORMATS: Record<string, string> = {
   ".ots": "ots",
   ".pages": "pages",
   ".numbers": "numbers",
-  ".epub": "epub",
+  // .epub has no dedicated document pair — use convertToPdf / convertToMarkdown.
   ".md": "markdown",
   ".markdown": "markdown",
   ".csv": "csv",

@@ -1,9 +1,13 @@
 /** Shared internal helpers used by both the V1 client and the V2 namespace. */
 
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
+import { Buffer } from "node:buffer";
 
 import { APIError, AuthenticationError, QuotaError, RateLimitError } from "./errors.js";
-import type { PdfOptions } from "./types.js";
+import { mimeFor } from "./formats.js";
+import type { FileInput, PdfOptions } from "./types.js";
 
 /** Authenticated, timeout-wrapped fetch bound to the client's base URL. */
 export type RequestFn = (path: string, init: RequestInit) => Promise<Response>;
@@ -44,4 +48,44 @@ export function newJobId(): string {
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Normalized file upload: raw bytes plus a filename and content type. */
+export interface FilePart {
+  bytes: Uint8Array;
+  filename: string;
+  contentType: string;
+}
+
+/**
+ * Convert a `FileInput` (path string, Uint8Array/Buffer, or { data, filename })
+ * into a normalized `{ bytes, filename, contentType }`. Shared by the V1 file
+ * conversions and the V2 file-ingest path.
+ */
+export async function toFilePart(file: FileInput): Promise<FilePart> {
+  if (typeof file === "string") {
+    const bytes = new Uint8Array(await readFile(file));
+    const filename = basename(file);
+    return { bytes, filename, contentType: mimeFor(filename) };
+  }
+  if (file instanceof Uint8Array || Buffer.isBuffer(file)) {
+    return {
+      bytes: file instanceof Uint8Array ? file : new Uint8Array(file),
+      filename: "upload.bin",
+      contentType: "application/octet-stream",
+    };
+  }
+  if (typeof file === "object" && file && "data" in file && "filename" in file) {
+    const wrapped = file;
+    const bytes =
+      wrapped.data instanceof Uint8Array ? wrapped.data : new Uint8Array(wrapped.data);
+    return {
+      bytes,
+      filename: wrapped.filename,
+      contentType: wrapped.contentType ?? mimeFor(wrapped.filename),
+    };
+  }
+  throw new Error(
+    "Unsupported file input. Pass a path string, Uint8Array/Buffer, or { data, filename }.",
+  );
 }

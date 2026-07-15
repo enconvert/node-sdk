@@ -1,8 +1,10 @@
-# enconvert
+# @enconvert/node-sdk
 
-JavaScript / TypeScript SDK for the [Enconvert](https://enconvert.com) file conversion API.
+Honest eyes for your AI agent — the JavaScript / TypeScript SDK for [Enconvert](https://enconvert.com). Node 18+.
 
-Convert URLs to PDFs, capture screenshots, extract Markdown, crawl whole websites, transform images, and convert documents — all with a single API call. Node 18+.
+Read any web page or file into clean Markdown, JSON, or screenshots, and get a `render_quality` score (0.0–1.0) on **every** read — so a blocked, challenge, or empty-SPA page comes back flagged with a low score and warnings, never mistaken for real content. Perceive, discover, look up, distill, ingest, and watch the web; convert 40+ file and document formats through the same key.
+
+> Wiring an agent (Claude, Cursor, Windsurf, n8n, …)? The [MCP server](https://enconvert.com/mcp) is the native path — `npx @enconvert/mcp setup`. This SDK is the programmatic REST path for everything else.
 
 ## Install
 
@@ -16,174 +18,21 @@ npm install @enconvert/node-sdk
 import { Enconvert } from "@enconvert/node-sdk";
 
 const client = new Enconvert({ apiKey: "sk_..." });
-```
 
-### URL to PDF
-
-```ts
-const result = await client.convertUrlToPdf("https://example.com", {
-  saveTo: "page.pdf",
+// Read a page the way your agent should — with a quality score attached.
+const op = await client.v2.perceive("https://example.com", {
+  outputs: ["markdown", "structured"],
 });
-console.log(result.presignedUrl);
+console.log(op.outputs.markdown.url, op.renderQuality); // e.g. 0.93
 ```
 
-### URL to Screenshot
+---
 
-```ts
-const result = await client.convertUrlToScreenshot("https://example.com", {
-  viewportWidth: 1440,
-  saveTo: "screenshot.png",
-});
-```
-
-### URL to Markdown
-
-Extract clean GitHub-Flavored Markdown from any URL — strips nav/footer/ads/scripts, keeps the main article content, and adds YAML frontmatter (title, description, url, links, images).
-
-```ts
-const result = await client.convertUrlToMarkdown("https://example.com/article", {
-  saveTo: "article.md",
-});
-```
-
-### Website to PDF / Screenshot (whole-site batch)
-
-Discover every page of a website (via sitemap, or full crawl on Pro/Business plans), convert each one in the background, and receive a single ZIP. Requires a private API key with crawl access.
-
-```ts
-const batch = await client.convertWebsiteToPdf("https://example.com", {
-  crawlMode: "sitemap",            // "auto" (default) | "sitemap" | "full"
-  excludePatterns: ["/blog/tag/"], // full crawl mode only
-});
-console.log(batch.batchId, batch.urlCount, batch.discoveryMethod);
-
-// Block until done and save the ZIP:
-const status = await client.waitForBatch(batch.batchId, { saveTo: "site.zip" });
-console.log(status.completed, "of", status.total, "pages converted");
-
-// Or poll yourself:
-const s = await client.getBatchStatus(batch.batchId);
-if (s.status !== "processing") console.log(s.zipDownloadUrl);
-```
-
-`convertWebsiteToScreenshot` works the same way and produces a ZIP of PNGs.
-
-### Image Conversion
-
-```ts
-const result = await client.convertImage("photo.heic", {
-  outputFormat: "webp",
-  saveTo: "photo.webp",
-});
-```
-
-Any pair among `jpeg`, `png`, `svg`, `heic`, `webp` — plus PDF rasterization:
-
-```ts
-await client.convertImage("scan.pdf", { outputFormat: "jpeg", saveTo: "scan.jpeg" });
-```
-
-### Document Conversion
-
-```ts
-await client.convertDocument("report.docx", { saveTo: "report.pdf" });
-await client.convertDocument("data.json", { outputFormat: "yaml", saveTo: "data.yaml" });
-await client.convertDocument("notes.md", { outputFormat: "html", saveTo: "notes.html" });
-```
-
-Supported inputs: `doc`/`docx`, `xls`/`xlsx`, `ppt`/`pptx`, `odt`, `ods`, `odp`, `ots`, `pages`, `numbers`, `epub`, `html`, `markdown`, `csv`, `json`, `xml`, `yaml`, `toml`
-
-The SDK validates every `{input}-to-{output}` pair against the conversions the API actually implements and throws immediately — with the list of valid outputs for that input — instead of sending a doomed request. Introspect programmatically:
-
-```ts
-import { IMPLEMENTED_CONVERSIONS, validOutputsFor } from "@enconvert/node-sdk";
-
-validOutputsFor("json");  // ["csv", "toml", "xml", "yaml"]
-validOutputsFor("pdf");   // ["jpeg"]
-```
-
-### Supported conversions
-
-| Input | Outputs |
-|-------|---------|
-| json | csv, toml, xml, yaml |
-| xml | csv, json |
-| yaml | json |
-| csv | json, xml |
-| toml | json |
-| markdown | html, pdf |
-| html | pdf |
-| doc, excel, ppt, odt, ods, odp, ots, pages, numbers, epub | pdf |
-| jpeg, png, svg, heic, webp | each other (all 20 pairs) |
-| pdf | jpeg |
-
-### Job Status (async polling)
-
-```ts
-const status = await client.getJobStatus("job_abc123");
-if (status.status === "success") {
-  console.log(status.presignedUrl);
-}
-```
-
-## PDF Options
-
-```ts
-const result = await client.convertUrlToPdf("https://example.com", {
-  pdfOptions: {
-    pageSize: "A4",              // or custom dimensions via pageWidth + pageHeight
-    orientation: "landscape",
-    margins: { top: 10, bottom: 10, left: 15, right: 15 },
-    header: { content: "Quarterly Report", height: 15 },
-    footer: { content: "Confidential", height: 12 },
-  },
-  saveTo: "report.pdf",
-});
-```
-
-## Authenticated Pages (plan-gated)
-
-All URL and website conversions accept HTTP Basic Auth, cookies, and custom headers for pages behind a login:
-
-```ts
-await client.convertUrlToPdf("https://internal.example.com/report", {
-  auth: { username: "user", password: "pass" },
-  // or cookies / headers:
-  cookies: [{ name: "session", value: "abc123", domain: "internal.example.com" }],
-  headers: { "X-Tenant": "acme" },
-  saveTo: "report.pdf",
-});
-```
-
-Do not combine `auth` with an `Authorization` header — the API rejects the conflict.
-
-## Error Handling
-
-```ts
-import { Enconvert, AuthenticationError, RateLimitError, APIError } from "@enconvert/node-sdk";
-
-try {
-  await client.convertUrlToPdf("https://example.com");
-} catch (e) {
-  if (e instanceof AuthenticationError) console.error("Invalid API key");
-  else if (e instanceof RateLimitError) console.error("Too many requests — slow down");
-  else if (e instanceof APIError) console.error(`API error [${e.statusCode}]: ${e.message}`);
-  else throw e;
-}
-```
-
-## Configuration
-
-```ts
-const client = new Enconvert({
-  apiKey: "sk_...",
-  timeout: 300_000, // ms, default
-});
-```
-
-## V2 API (`client.v2`)
+# V2 — agent-ready data (`client.v2`)
 
 The V2 namespace turns web pages into agent-ready data: render, search, extract, ingest, and monitor. All V2 endpoints require a **private API key** and are plan-gated — a disabled feature or exhausted monthly quota throws `QuotaError` (HTTP 402).
+
+Every render carries `renderQuality` (0.0–1.0). A low score means the page didn't render cleanly (challenge page, cookie wall, empty shell); the content is still returned, flagged, so a bad read never quietly enters your agent's context.
 
 ### Perceive — render a URL into artifacts
 
@@ -192,13 +41,14 @@ const op = await client.v2.perceive("https://example.com", {
   outputs: ["markdown", "screenshot", "structured"],
   extract: ["tables", "metadata"],
 });
+console.log(op.renderQuality);          // honesty score, 0.0–1.0
 console.log(op.outputs.markdown.url);   // 15-min signed URL
 console.log(op.structured);
 
 // Re-sign artifact URLs later:
 const again = await client.v2.getPerceiveOperation(op.operationId);
 
-// Batch (<=10 URLs runs inline; larger returns "queued" — poll):
+// Batch (<=1000 URLs; small batches run inline, larger return "queued" — poll):
 const batch = await client.v2.perceiveBatch(["https://a.com", "https://b.com"], {
   outputs: ["markdown"],
   outputMode: "zip",
@@ -225,7 +75,7 @@ const search = await client.v2.lookup("best static site generators", {
   numResults: 10,
   perceiveTop: 3,              // auto-render top 3 results (uses perceive quota)
 });
-for (const hit of search.results) console.log(hit.title, hit.url, hit.perceive?.outputs);
+for (const hit of search.results) console.log(hit.title, hit.url, hit.perceive?.renderQuality);
 ```
 
 ### Distill — schema-driven structured extraction
@@ -251,9 +101,12 @@ await client.v2.distill({
 });
 ```
 
-### Ingest — site to RAG-ready JSONL (always async)
+### Ingest — site or files to RAG-ready JSONL (always async)
+
+Turn a whole site — or a set of uploaded documents — into chunked, RAG-ready JSONL through one pipeline.
 
 ```ts
+// From a site:
 const job = await client.v2.ingest({
   mode: "sitemap",
   url: "https://docs.example.com",
@@ -262,16 +115,21 @@ const job = await client.v2.ingest({
   webhookUrl: "https://my.app/hooks/enconvert",
 });
 
-const status = await client.v2.getIngestJob(job.jobId);   // poll
+// Or from uploaded files (PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD, legacy/ODF office):
+const fileJob = await client.v2.ingestFiles(["handbook.pdf", "notes.docx"], {
+  chunk: { maxWords: 512, sentenceOverlap: 1 },
+});
+
+const status = await client.v2.getIngestJob(job.jobId);          // poll
 if (status.status === "completed") console.log(status.outputUrl); // JSONL
 
 await client.v2.listIngestJobs({ limit: 20 });
-await client.v2.cancelIngestJob(job.jobId);                // idempotent
+await client.v2.cancelIngestJob(job.jobId);                       // idempotent
 
 // Webhook signing (HMAC):
 const { secret, signatureHeader } = await client.v2.getWebhookSecret();
-await client.v2.rotateWebhookSecret();                     // invalidates old secret
-await client.v2.retryIngestWebhook(job.jobId);             // re-deliver
+await client.v2.rotateWebhookSecret();                            // invalidates old secret
+await client.v2.retryIngestWebhook(job.jobId);                    // re-deliver
 ```
 
 ### Watch — recurring change monitoring
@@ -289,7 +147,7 @@ await client.v2.getWatcher(watcher.watcherId);
 await client.v2.getWatcherSnapshots(watcher.watcherId, { limit: 10 });
 await client.v2.updateWatcher(watcher.watcherId, { status: "paused" });
 await client.v2.updateWatcher(watcher.watcherId, { webhookUrl: "" }); // clears webhook
-await client.v2.deleteWatcher(watcher.watcherId);          // soft-delete, idempotent
+await client.v2.deleteWatcher(watcher.watcherId);                     // soft-delete, idempotent
 ```
 
 ### V2 error handling
@@ -298,16 +156,140 @@ await client.v2.deleteWatcher(watcher.watcherId);          // soft-delete, idemp
 import { QuotaError } from "@enconvert/node-sdk";
 
 try {
-  await client.v2.ingest({ urls: ["https://example.com"] });
+  await client.v2.ingest({ mode: "sitemap", url: "https://example.com" });
 } catch (e) {
   if (e instanceof QuotaError) console.error("Upgrade plan or wait for quota reset");
   else throw e;
 }
 ```
 
+---
+
+# File conversion
+
+The same key also converts 40+ formats. Two "anything → X" endpoints auto-detect the input; the format-specific endpoints below give you a validated, typed path.
+
+### Anything to Markdown / PDF
+
+```ts
+// Any document → clean Markdown (a RAG-ingestion building block):
+await client.convertToMarkdown("report.docx", { saveTo: "report.md" });
+// PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD, and legacy/ODF office. (Images not supported.)
+
+// Almost anything → PDF:
+await client.convertToPdf("slides.pptx", { saveTo: "slides.pdf" });
+// office/ODF/Pages/Numbers/RTF/CSV, HTML, Markdown, text, images, SVG, EPUB, or a PDF passthrough.
+// Only pdfOptions.grayscale is honored on this endpoint:
+await client.convertToPdf("scan.pdf", { pdfOptions: { grayscale: true }, saveTo: "gray.pdf" });
+```
+
+### Image conversion
+
+```ts
+const result = await client.convertImage("photo.heic", {
+  outputFormat: "webp",
+  saveTo: "photo.webp",
+});
+```
+
+Any pair among `jpeg`, `png`, `svg`, `heic`, `webp` — plus PDF rasterization (`pdf` → `jpeg`). Unsupported pairs throw before any request is made:
+
+```ts
+import { IMPLEMENTED_CONVERSIONS, validOutputsFor } from "@enconvert/node-sdk";
+validOutputsFor("json");  // ["csv", "toml", "xml", "yaml"]
+validOutputsFor("pdf");   // ["jpeg"]
+```
+
+### Document & data conversion
+
+```ts
+await client.convertDocument("report.docx", { saveTo: "report.pdf" });
+await client.convertDocument("data.json", { outputFormat: "yaml", saveTo: "data.yaml" });
+await client.convertDocument("notes.md", { outputFormat: "html", saveTo: "notes.html" });
+```
+
+Supported inputs: `doc`/`docx`, `xls`/`xlsx`, `ppt`/`pptx`, `odt`, `ods`, `odp`, `ots`, `pages`, `numbers`, `html`, `markdown`, `csv`, `json`, `xml`, `yaml`, `toml`. (EPUB → use `convertToPdf` / `convertToMarkdown`.)
+
+| Input | Outputs |
+|-------|---------|
+| json | csv, toml, xml, yaml |
+| xml | csv, json |
+| yaml | json |
+| csv | json, xml |
+| toml | json |
+| markdown | html, pdf |
+| html | pdf |
+| doc, excel, ppt, odt, ods, odp, ots, pages, numbers | pdf |
+| jpeg, png, svg, heic, webp | each other (all 20 pairs) |
+| pdf | jpeg |
+
+### URL to PDF / Screenshot / Markdown
+
+```ts
+await client.convertUrlToPdf("https://example.com", { saveTo: "page.pdf" });
+await client.convertUrlToScreenshot("https://example.com", { viewportWidth: 1440, saveTo: "shot.png" });
+await client.convertUrlToMarkdown("https://example.com/article", { saveTo: "article.md" });
+```
+
+### Website to PDF / Screenshot (whole-site batch)
+
+Discover every page of a website (sitemap, or full crawl on higher plans), convert each in the background, and receive a single ZIP. Requires a private API key with crawl access.
+
+```ts
+const batch = await client.convertWebsiteToPdf("https://example.com", { crawlMode: "sitemap" });
+const status = await client.waitForBatch(batch.batchId, { saveTo: "site.zip" });
+console.log(status.completed, "of", status.total, "pages converted");
+```
+
+### PDF options & authenticated pages
+
+```ts
+await client.convertUrlToPdf("https://internal.example.com/report", {
+  pdfOptions: { pageSize: "A4", orientation: "landscape", margins: { top: 10, bottom: 10 } },
+  auth: { username: "user", password: "pass" },     // or cookies / headers, plan-gated
+  saveTo: "report.pdf",
+});
+```
+
+Do not combine `auth` with an `Authorization` header — the API rejects the conflict.
+
+### Job status (async polling)
+
+```ts
+const status = await client.getJobStatus("job_abc123");
+if (status.status === "success") console.log(status.presignedUrl);
+```
+
+---
+
+## Error Handling
+
+```ts
+import { Enconvert, AuthenticationError, RateLimitError, QuotaError, APIError } from "@enconvert/node-sdk";
+
+try {
+  await client.v2.perceive("https://example.com");
+} catch (e) {
+  if (e instanceof AuthenticationError) console.error("Invalid API key");
+  else if (e instanceof QuotaError) console.error("Plan feature off or quota exhausted");
+  else if (e instanceof RateLimitError) console.error("Too many requests — slow down");
+  else if (e instanceof APIError) console.error(`API error [${e.statusCode}]: ${e.message}`);
+  else throw e;
+}
+```
+
+## Configuration
+
+```ts
+const client = new Enconvert({
+  apiKey: "sk_...",
+  timeout: 300_000, // ms, default
+});
+```
+
 ## Get an API Key
 
-Sign up at [enconvert.com](https://enconvert.com) to get your API key.
+Sign up at [enconvert.com](https://enconvert.com). Free tier: 100 ops/month, no credit card.
 
 ## License
 
