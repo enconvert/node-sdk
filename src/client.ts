@@ -1,4 +1,4 @@
-/** Enconvert API client. Node 18+ only. */
+/** EnConvert API client. Node 18+ only. */
 
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
@@ -9,9 +9,14 @@ import type { ReadableStream as NodeWebReadableStream } from "node:stream/web";
 
 import { APIError } from "./errors.js";
 import {
+  ANYTHING_TO_MARKDOWN_EXTENSIONS,
+  ANYTHING_TO_PDF_EXTENSIONS,
+  COMPRESS_IMAGE_EXTENSIONS,
   DOCUMENT_FORMATS,
   IMAGE_FORMATS,
+  SVG_SIZED_CONVERSIONS,
   assertConversionImplemented,
+  assertExtensionAllowed,
   normalizeOutputFormat,
   resolveInputFormat,
 } from "./formats.js";
@@ -28,6 +33,7 @@ import type {
   BatchStatus,
   BatchSubmission,
   ClientOptions,
+  CompressImageOptions,
   ConversionResult,
   ConvertDocumentOptions,
   ConvertImageOptions,
@@ -50,9 +56,13 @@ const DEFAULT_BASE_URL = "https://api.enconvert.com";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const DEFAULT_BATCH_POLL_INTERVAL_MS = 5_000;
 const DEFAULT_BATCH_TIMEOUT_MS = 1_800_000;
+/** Per-side limit on the SVG rasterization width / height form fields. */
+const MAX_SVG_DIMENSION = 10_000;
+/** Total output pixel cap enforced by the API for sized SVG rasterization. */
+const MAX_SVG_OUTPUT_PIXELS = 25_000_000;
 
 /**
- * Enconvert file conversion client (Node 18+).
+ * EnConvert file conversion client (Node 18+).
  *
  * @example
  *   import { Enconvert } from "@enconvert/node-sdk";
@@ -72,7 +82,7 @@ export class Enconvert {
   readonly v2: EnconvertV2;
 
   constructor(opts: ClientOptions) {
-    if (!opts?.apiKey) throw new Error("Enconvert: 'apiKey' is required");
+    if (!opts?.apiKey) throw new Error("EnConvert: 'apiKey' is required");
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS;
@@ -174,13 +184,22 @@ export class Enconvert {
    * Convert an image between formats (jpeg, png, svg, heic, webp), or
    * rasterize a PDF to JPEG. Only pairs implemented by the API are accepted;
    * unsupported pairs throw before any request is made.
+   *
+   * `opts.width` / `opts.height` size the rasterized output and are supported
+   * for svg-to-png, svg-to-jpeg and svg-to-webp only. Either one alone scales
+   * proportionally from the SVG's own aspect ratio; both together set an exact
+   * canvas. They are validated locally before any request is made.
    */
   async convertImage(file: FileInput, opts: ConvertImageOptions): Promise<ConversionResult> {
     const part = await toFilePart(file);
     const inputFormat = resolveInputFormat(part.filename, IMAGE_FORMATS);
     const outputFmt = normalizeOutputFormat(opts.outputFormat);
-    const endpoint = `/v1/convert/${assertConversionImplemented(inputFormat, outputFmt)}`;
-    const data = await this.postFile(endpoint, part, { outputFilename: opts.outputFilename });
+    const conversion = assertConversionImplemented(inputFormat, outputFmt);
+    const fields = buildSvgSizeFields(conversion, opts);
+    const data = await this.postFile(`/v1/convert/${conversion}`, part, {
+      outputFilename: opts.outputFilename,
+      fields,
+    });
     const result = toConversionResult(data);
     if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
     return result;
@@ -210,16 +229,19 @@ export class Enconvert {
   }
 
   /**
-   * Convert an uploaded file of (almost) any document format to clean Markdown
-   * — PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD, and legacy/ODF office.
-   * The format is auto-detected server-side; a RAG-ingestion building block.
-   * Images are not supported.
+   * Convert an uploaded file of (almost) any document format to clean Markdown:
+   * PDF, DOCX, PPTX, XLSX, CSV, HTML, EPUB, TXT/MD, and legacy/ODF office. The
+   * format is auto-detected server-side; a RAG-ingestion building block.
+   * Images are not supported. Accepts the 22 extensions in
+   * ANYTHING_TO_MARKDOWN_EXTENSIONS; anything else throws before any request
+   * is made.
    */
   async convertToMarkdown(
     file: FileInput,
     opts: ConvertToMarkdownOptions = {},
   ): Promise<ConversionResult> {
     const part = await toFilePart(file);
+    assertExtensionAllowed(part.filename, ANYTHING_TO_MARKDOWN_EXTENSIONS, "anything-to-markdown");
     const data = await this.postFile("/v1/convert/anything-to-markdown", part, {
       outputFilename: opts.outputFilename,
     });
@@ -229,19 +251,65 @@ export class Enconvert {
   }
 
   /**
-   * Convert an uploaded file of (almost) any format to PDF — office/ODF/Pages/
+   * Convert an uploaded file of (almost) any format to PDF: office/ODF/Pages/
    * Numbers/RTF/CSV, HTML, Markdown, text, raster images, SVG, EPUB, or an
    * existing PDF (passthrough/normalise). The format is auto-detected
-   * server-side. Only `pdfOptions.grayscale` is honored on this endpoint.
+   * server-side. Accepts the 36 extensions in ANYTHING_TO_PDF_EXTENSIONS;
+   * anything else throws before any request is made.
+   *
+   * `pdfOptions` caveat: full page geometry (pageSize, pageWidth/pageHeight,
+   * orientation, margins, scale, header, footer) is honored only for html,
+   * htm, xhtml, markdown, plain text, epub, image and svg input. Office, ODF,
+   * iWork, RTF and CSV input plus PDF passthrough support `grayscale` only and
+   * return 400 when an explicit geometry option is set.
    */
   async convertToPdf(
     file: FileInput,
     opts: ConvertToPdfOptions = {},
   ): Promise<ConversionResult> {
     const part = await toFilePart(file);
+    assertExtensionAllowed(part.filename, ANYTHING_TO_PDF_EXTENSIONS, "anything-to-pdf");
     const data = await this.postFile("/v1/convert/anything-to-pdf", part, {
       outputFilename: opts.outputFilename,
       pdfOptions: opts.pdfOptions,
+    });
+    const result = toConversionResult(data);
+    if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
+    return result;
+  }
+
+  // ------------------------------------------------------------------
+  // Same-format compression
+  // ------------------------------------------------------------------
+
+  /**
+   * Compress a png, jpg, jpeg or webp image. The output keeps the input
+   * format and extension - there is no output format to choose - and is never
+   * larger than the input. Compression is lossless first (metadata stripped,
+   * ICC profile and EXIF orientation preserved); when `targetSizeKb` is set
+   * and lossless alone misses it, the image is downscaled with its aspect
+   * ratio locked. The target is best effort: an unreachable `targetSizeKb`
+   * returns the smallest file achieved rather than throwing, so check
+   * `result.fileSize`. Animated APNG and animated WebP are rejected.
+   */
+  async compressImage(
+    file: FileInput,
+    opts: CompressImageOptions = {},
+  ): Promise<ConversionResult> {
+    const part = await toFilePart(file);
+    assertExtensionAllowed(part.filename, COMPRESS_IMAGE_EXTENSIONS, "compress-image");
+    const fields: Record<string, number> = {};
+    if (opts.targetSizeKb !== undefined) {
+      if (!Number.isInteger(opts.targetSizeKb) || opts.targetSizeKb < 1) {
+        throw new Error(
+          `'targetSizeKb' must be an integer of at least 1, got ${opts.targetSizeKb}.`,
+        );
+      }
+      fields.target_size_kb = opts.targetSizeKb;
+    }
+    const data = await this.postFile("/v1/convert/compress-image", part, {
+      outputFilename: opts.outputFilename,
+      fields,
     });
     const result = toConversionResult(data);
     if (opts.saveTo) await this.download(result.presignedUrl, opts.saveTo);
@@ -335,7 +403,12 @@ export class Enconvert {
   private async postFile(
     endpoint: string,
     part: FilePart,
-    opts: { outputFilename?: string; pdfOptions?: PdfOptions } = {},
+    opts: {
+      outputFilename?: string;
+      pdfOptions?: PdfOptions;
+      /** Extra scalar form fields, sent under their API names. */
+      fields?: Record<string, string | number>;
+    } = {},
   ): Promise<unknown> {
     const jobId = newJobId();
     const form = new FormData();
@@ -345,6 +418,9 @@ export class Enconvert {
     if (opts.outputFilename) form.append("output_filename", opts.outputFilename);
     if (opts.pdfOptions) {
       form.append("pdf_options", JSON.stringify(serializePdfOptions(opts.pdfOptions)));
+    }
+    for (const [key, value] of Object.entries(opts.fields ?? {})) {
+      if (value !== undefined) form.append(key, String(value));
     }
     try {
       const resp = await this.fetch(endpoint, { method: "POST", body: form });
@@ -402,6 +478,51 @@ export class Enconvert {
 // Module-level helpers (same role as Python's @staticmethod private helpers)
 // ----------------------------------------------------------------------
 
+/**
+ * Validate and collect the optional width / height form fields for SVG
+ * rasterization. Returns undefined when neither is set, so non-SVG
+ * conversions are unaffected. All checks are local, mirroring the API's own
+ * limits so a bad request never leaves the process.
+ */
+function buildSvgSizeFields(
+  conversion: string,
+  opts: ConvertImageOptions,
+): Record<string, number> | undefined {
+  const { width, height } = opts;
+  if (width === undefined && height === undefined) return undefined;
+  if (!SVG_SIZED_CONVERSIONS.has(conversion)) {
+    throw new Error(
+      `'width' and 'height' are not supported for '${conversion}'. They are only supported for ` +
+        "svg-to-png, svg-to-jpeg and svg-to-webp.",
+    );
+  }
+  const fields: Record<string, number> = {};
+  if (width !== undefined) {
+    assertPixelDimension(width, "width");
+    fields.width = width;
+  }
+  if (height !== undefined) {
+    assertPixelDimension(height, "height");
+    fields.height = height;
+  }
+  if (width !== undefined && height !== undefined && width * height > MAX_SVG_OUTPUT_PIXELS) {
+    throw new Error(
+      `'width' x 'height' is ${width * height} pixels, which exceeds the ` +
+        `${MAX_SVG_OUTPUT_PIXELS} pixel output limit.`,
+    );
+  }
+  return fields;
+}
+
+/** Reject a width / height that is not an integer within the API's 1-10000 range. */
+function assertPixelDimension(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 1 || value > MAX_SVG_DIMENSION) {
+    throw new Error(
+      `'${name}' must be an integer between 1 and ${MAX_SVG_DIMENSION}, got ${value}.`,
+    );
+  }
+}
+
 /** Request body shared by all single-URL conversions. */
 function buildUrlBody(url: string, opts: UrlRenderOptions): Record<string, unknown> {
   const body: Record<string, unknown> = {
@@ -419,7 +540,7 @@ function buildUrlBody(url: string, opts: UrlRenderOptions): Record<string, unkno
 
 /**
  * Request body for website (whole-site) conversions. Render options are only
- * sent when set — the gateway applies the same defaults per page.
+ * sent when set, and the gateway applies the same defaults per page.
  */
 function buildWebsiteBody(url: string, opts: WebsiteConversionOptions): Record<string, unknown> {
   const body: Record<string, unknown> = { url };

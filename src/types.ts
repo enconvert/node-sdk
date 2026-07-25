@@ -1,4 +1,4 @@
-/** Enconvert SDK response and option types. */
+/** EnConvert SDK response and option types. */
 
 export interface ConversionResult {
   presignedUrl: string;
@@ -123,6 +123,20 @@ export interface ConvertImageOptions {
   outputFormat: string;
   saveTo?: string;
   outputFilename?: string;
+  /**
+   * Output width in pixels, 1-10000. SVG input only (svg-to-png, svg-to-jpeg,
+   * svg-to-webp). Supplied alone it scales proportionally, deriving the height
+   * from the SVG's own aspect ratio. Set with `height` to force an exact
+   * canvas, which may change the aspect ratio.
+   */
+  width?: number;
+  /**
+   * Output height in pixels, 1-10000. SVG input only (svg-to-png, svg-to-jpeg,
+   * svg-to-webp). Supplied alone it scales proportionally, deriving the width
+   * from the SVG's own aspect ratio. Set with `width` to force an exact
+   * canvas, which may change the aspect ratio.
+   */
+  height?: number;
 }
 
 export interface ConvertDocumentOptions {
@@ -130,6 +144,18 @@ export interface ConvertDocumentOptions {
   saveTo?: string;
   outputFilename?: string;
   pdfOptions?: PdfOptions;
+}
+
+/** Options for `compressImage` (compress-image). */
+export interface CompressImageOptions {
+  /**
+   * Size budget in KB. Omit for lossless-only. Best effort: an unreachable
+   * target returns the smallest file achieved, not an error, so check
+   * `result.fileSize`.
+   */
+  targetSizeKb?: number;
+  saveTo?: string;
+  outputFilename?: string;
 }
 
 /** Options for `convertToMarkdown` (anything-to-markdown). */
@@ -142,7 +168,13 @@ export interface ConvertToMarkdownOptions {
 export interface ConvertToPdfOptions {
   saveTo?: string;
   outputFilename?: string;
-  /** Only `grayscale` is honored by the anything-to-pdf endpoint. */
+  /**
+   * Page geometry (pageSize, pageWidth/pageHeight, orientation, margins,
+   * scale, header, footer) is honored only for html, htm, xhtml, markdown,
+   * plain text, epub, image and svg input. Office, ODF, iWork, RTF and CSV
+   * input plus PDF passthrough support `grayscale` only, and reject an
+   * explicitly set geometry option with a 400.
+   */
   pdfOptions?: PdfOptions;
 }
 

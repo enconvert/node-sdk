@@ -101,7 +101,12 @@ export const MIME_BY_EXT: Record<string, string> = {
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".heic": "image/heic",
+  ".heif": "image/heif",
   ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".bmp": "image/bmp",
+  ".tif": "image/tiff",
+  ".tiff": "image/tiff",
   ".pdf": "application/pdf",
   ".doc": "application/msword",
   ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -109,14 +114,23 @@ export const MIME_BY_EXT: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   ".ppt": "application/vnd.ms-powerpoint",
   ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".rtf": "application/rtf",
   ".html": "text/html",
   ".htm": "text/html",
+  ".xhtml": "application/xhtml+xml",
   ".odt": "application/vnd.oasis.opendocument.text",
   ".ods": "application/vnd.oasis.opendocument.spreadsheet",
   ".odp": "application/vnd.oasis.opendocument.presentation",
+  ".ots": "application/vnd.oasis.opendocument.spreadsheet-template",
+  ".pages": "application/vnd.apple.pages",
+  ".numbers": "application/vnd.apple.numbers",
   ".epub": "application/epub+zip",
   ".md": "text/markdown",
   ".markdown": "text/markdown",
+  ".mdown": "text/markdown",
+  ".mkd": "text/markdown",
+  ".txt": "text/plain",
+  ".text": "text/plain",
   ".csv": "text/csv",
   ".json": "application/json",
   ".xml": "application/xml",
@@ -124,6 +138,93 @@ export const MIME_BY_EXT: Record<string, string> = {
   ".yml": "application/x-yaml",
   ".toml": "application/toml",
 };
+
+/**
+ * Input extensions accepted by POST /v1/convert/compress-image. The output
+ * keeps the input format, so there is no output format to choose.
+ */
+export const COMPRESS_IMAGE_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+]);
+
+/** The 22 input extensions accepted by POST /v1/convert/anything-to-markdown. */
+export const ANYTHING_TO_MARKDOWN_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".csv",
+  ".doc",
+  ".docx",
+  ".epub",
+  ".htm",
+  ".html",
+  ".markdown",
+  ".md",
+  ".mdown",
+  ".mkd",
+  ".odp",
+  ".ods",
+  ".odt",
+  ".pdf",
+  ".ppt",
+  ".pptx",
+  ".rtf",
+  ".text",
+  ".txt",
+  ".xhtml",
+  ".xls",
+  ".xlsx",
+]);
+
+/** The 36 input extensions accepted by POST /v1/convert/anything-to-pdf. */
+export const ANYTHING_TO_PDF_EXTENSIONS: ReadonlySet<string> = new Set([
+  ".bmp",
+  ".csv",
+  ".doc",
+  ".docx",
+  ".epub",
+  ".gif",
+  ".heic",
+  ".heif",
+  ".htm",
+  ".html",
+  ".jpeg",
+  ".jpg",
+  ".markdown",
+  ".md",
+  ".mdown",
+  ".mkd",
+  ".numbers",
+  ".odp",
+  ".ods",
+  ".odt",
+  ".ots",
+  ".pages",
+  ".pdf",
+  ".png",
+  ".ppt",
+  ".pptx",
+  ".rtf",
+  ".svg",
+  ".text",
+  ".tif",
+  ".tiff",
+  ".txt",
+  ".webp",
+  ".xhtml",
+  ".xls",
+  ".xlsx",
+]);
+
+/**
+ * Conversions that accept the optional `width` / `height` form fields.
+ * svg-to-heic does not, so it is deliberately absent.
+ */
+export const SVG_SIZED_CONVERSIONS: ReadonlySet<string> = new Set([
+  "svg-to-png",
+  "svg-to-jpeg",
+  "svg-to-webp",
+]);
 
 // Common aliases users pass that differ from the API's canonical format names.
 const OUTPUT_FORMAT_ALIASES: Record<string, string> = {
@@ -151,6 +252,25 @@ export function resolveInputFormat(name: string, map: Record<string, string>): s
     throw new Error(`Unsupported file extension '${ext}'. Supported: ${supported}`);
   }
   return fmt;
+}
+
+/**
+ * Assert a filename's extension is accepted by a fixed-endpoint conversion
+ * (compress-image, anything-to-markdown, anything-to-pdf), or throw with the
+ * sorted list of extensions that endpoint accepts.
+ */
+export function assertExtensionAllowed(
+  filename: string,
+  allowed: ReadonlySet<string>,
+  endpoint: string,
+): void {
+  const ext = extOf(filename);
+  if (!allowed.has(ext)) {
+    const supported = Array.from(allowed).sort().join(", ");
+    throw new Error(
+      `Unsupported file extension '${ext}' for '${endpoint}'. Supported: ${supported}`,
+    );
+  }
 }
 
 /** Lowercase, strip a leading dot, and resolve aliases (jpg, yml, htm, md). */

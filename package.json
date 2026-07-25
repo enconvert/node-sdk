@@ -1,16 +1,16 @@
 {
   "name": "@enconvert/node-sdk",
   "publishConfig": {
-      "access": "public"
-    },
-  "version": "0.1.1",
-  "description": "JavaScript / TypeScript SDK for Enconvert — read any page or file into agent-ready Markdown, JSON, or screenshots (scored 0.0-1.0), plus file conversion. V2 perception + MCP.",
+    "access": "public"
+  },
+  "version": "0.2.0",
+  "description": "JavaScript / TypeScript SDK for EnConvert: read any page or file into agent-ready Markdown, JSON, or screenshots (scored 0.0-1.0), compress images, and convert documents. V2 perception + MCP.",
   "license": "MIT",
-  "author": "Enconvert <support@enconvert.com>",
+  "author": "EnConvert <support@enconvert.com>",
   "homepage": "https://enconvert.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/conversionapi/node-sdk.git"
+    "url": "git+https://github.com/enconvert/node-sdk.git"
   },
   "type": "module",
   "main": "./dist/index.cjs",
@@ -27,6 +27,9 @@
         "default": "./dist/index.cjs"
       }
     }
+  },
+  "bin": {
+    "enconvert-sdk": "./dist/bin.js"
   },
   "files": [
     "dist",
@@ -51,7 +54,14 @@
     "heic-to-webp",
     "docx-to-pdf",
     "api",
-    "sdk"
+    "sdk",
+    "compress-image",
+    "image-compression",
+    "anything-to-pdf",
+    "anything-to-markdown",
+    "svg-to-png",
+    "markdown",
+    "rag"
   ],
   "scripts": {
     "build": "tsup",

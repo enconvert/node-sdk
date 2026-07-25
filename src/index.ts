@@ -1,4 +1,4 @@
-/** Enconvert — JavaScript / TypeScript SDK for the Enconvert file conversion API. */
+/** JavaScript / TypeScript SDK for the EnConvert file conversion API. */
 
 export { Enconvert } from "./client.js";
 export { EnconvertV2 } from "./v2.js";
@@ -9,7 +9,13 @@ export {
   QuotaError,
   RateLimitError,
 } from "./errors.js";
-export { IMPLEMENTED_CONVERSIONS, validOutputsFor } from "./formats.js";
+export {
+  ANYTHING_TO_MARKDOWN_EXTENSIONS,
+  ANYTHING_TO_PDF_EXTENSIONS,
+  COMPRESS_IMAGE_EXTENSIONS,
+  IMPLEMENTED_CONVERSIONS,
+  validOutputsFor,
+} from "./formats.js";
 export type {
   BatchItem,
   BatchStatus,
@@ -17,6 +23,7 @@ export type {
   BatchSubmission,
   BrowserCookie,
   ClientOptions,
+  CompressImageOptions,
   ConversionResult,
   ConvertDocumentOptions,
   ConvertImageOptions,
@@ -94,4 +101,4 @@ export type {
   WebhookSecret,
 } from "./v2-types.js";
 
-export const VERSION = "0.1.1";
+export const VERSION = "0.2.0";
