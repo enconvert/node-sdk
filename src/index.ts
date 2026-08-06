@@ -76,6 +76,7 @@ export type {
   PerceiveBatchResult,
   PerceiveBatchStatus,
   PerceiveCacheMode,
+  PerceiveDirectResult,
   PerceiveExtractName,
   PerceiveExtractionTier,
   PerceiveOptions,

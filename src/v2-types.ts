@@ -14,7 +14,6 @@ import type { HttpBasicAuth, BrowserCookie, PdfOptions } from "./types.js";
 
 export type PerceiveOutputName =
   | "markdown"
-  | "markdown_fit"
   | "html_cleaned"
   | "html_raw"
   | "screenshot"
@@ -64,6 +63,12 @@ export interface PerceiveOptions {
   outputs?: PerceiveOutputName[];
   /** Heuristic extraction targets. Unsupported members yield warnings. */
   extract?: PerceiveExtractName[];
+  /**
+   * Strip site chrome (nav, header, footer, cookie banners) from the
+   * markdown output and main_content extract, behind a fidelity guard.
+   * Default true; false returns the full page untouched.
+   */
+  onlyMainContent?: boolean;
   /** JSON schema for structured extraction (LLM tier, plan-gated). */
   schema?: Record<string, unknown>;
   /** CSS selector (optionally "css:...") or "js:<expr>" to await. */
@@ -91,6 +96,12 @@ export interface PerceiveOptions {
   blockResources?: PerceiveResourceType[];
   respectRobots?: boolean;
   mobile?: boolean;
+  /**
+   * perceive() only — the batch endpoint rejects it (use outputMode "zip").
+   * Requires exactly one artifact-producing output; the HTTP response body
+   * is then the raw artifact bytes with metadata in headers, not JSON.
+   */
+  directDownload?: boolean;
 }
 
 export type PerceiveBatchOutputMode = "manifest" | "zip";
@@ -126,6 +137,10 @@ export interface PerceiveResult {
   contentHash?: string;
   /** 0.0-1.0 render quality score. */
   renderQuality?: number;
+  /** HTTP status of the final main-document response (e.g. 200, 404). */
+  statusCode?: number | null;
+  /** Named render-quality deductions that fired, e.g. {http_error: 0.7}. */
+  deductions?: Record<string, number>;
   cacheHit: boolean;
   /** Keyed by output name (e.g. "markdown", "screenshot_full_page"). */
   outputs: Record<string, V2OutputArtifact>;
@@ -135,8 +150,35 @@ export interface PerceiveResult {
   tokens: V2Tokens;
   costCents: number;
   durationMs?: number;
+  /** Echo of the request options the server honoured (secrets redacted). */
+  optionsEcho?: Record<string, unknown> | null;
   error?: string;
   warnings: string[];
+}
+
+/**
+ * Raw artifact bytes returned by perceiveDirect / downloadPerceiveArtifact.
+ * The HTTP body is the artifact itself; metadata is parsed from the
+ * response headers (absent headers map to undefined / 0).
+ */
+export interface PerceiveDirectResult {
+  /** The artifact bytes (the response body itself, not a signed URL). */
+  content: Uint8Array;
+  /** Artifact media type, e.g. "text/markdown; charset=utf-8". */
+  contentType: string;
+  /** Parsed from Content-Disposition, e.g. "per_..._markdown.md". */
+  filename?: string;
+  operationId: string;
+  objectKey: string;
+  cacheHit: boolean;
+  /** 0.0-1.0 render quality score. */
+  renderQuality?: number;
+  /** HTTP status of the upstream main-document response (e.g. 200, 404). */
+  sourceStatusCode?: number;
+  /** sha256 content hash. */
+  contentHash?: string;
+  /** 0 when the header is absent. */
+  warningsCount: number;
 }
 
 export type PerceiveBatchStatus =

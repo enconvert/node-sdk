@@ -32,7 +32,9 @@ import type {
   LookupResult,
   PerceiveBatchOptions,
   PerceiveBatchResult,
+  PerceiveDirectResult,
   PerceiveOptions,
+  PerceiveOutputName,
   PerceiveResult,
   SnapshotListOptions,
   V2ListOptions,
@@ -72,12 +74,52 @@ export class EnconvertV2 {
   }
 
   /**
+   * Perceive with direct_download forced on: the response body IS the
+   * artifact bytes, with metadata in headers — no signed URL round-trip.
+   * Requires exactly one artifact-producing output ("structured" may ride
+   * along; it stays inline server-side and is not returned here).
+   */
+  async perceiveDirect(url: string, opts: PerceiveOptions = {}): Promise<PerceiveDirectResult> {
+    requireOneArtifactOutput("perceiveDirect", opts.outputs);
+    const body = serializePerceiveOptions(opts);
+    body.url = url;
+    body.direct_download = true;
+    return toPerceiveDirectResult(
+      await this.bytes("/v2/perceive", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  }
+
+  /**
    * Re-fetch a perceive operation by id (`per_...`). Artifact URLs are
    * freshly re-signed on every call.
    */
   async getPerceiveOperation(operationId: string): Promise<PerceiveResult> {
     return toPerceiveResult(
       await this.get(`/v2/perceive/${encodeURIComponent(operationId)}`),
+    );
+  }
+
+  /**
+   * Download one stored artifact of an earlier perceive operation as raw
+   * bytes. `output` may be omitted when the operation produced exactly one
+   * artifact (400 otherwise, listing the available outputs). 410 once the
+   * artifact passed the plan's retention window.
+   */
+  async downloadPerceiveArtifact(
+    operationId: string,
+    output?: PerceiveOutputName,
+  ): Promise<PerceiveDirectResult> {
+    const params = new URLSearchParams({ direct_download: "true" });
+    if (output !== undefined) params.set("output", output);
+    return toPerceiveDirectResult(
+      await this.bytes(
+        `/v2/perceive/${encodeURIComponent(operationId)}?${params.toString()}`,
+        { method: "GET" },
+      ),
     );
   }
 
@@ -417,16 +459,48 @@ export class EnconvertV2 {
   private get(path: string): Promise<Record<string, unknown>> {
     return this.json(path, { method: "GET" });
   }
+
+  /** Like json() but for raw-byte responses; errors still decode as JSON. */
+  private async bytes(path: string, init: RequestInit): Promise<Response> {
+    const resp = await this.request(path, init);
+    await raiseForStatus(resp);
+    return resp;
+  }
 }
 
 // ----------------------------------------------------------------------
 // Request serializers
 // ----------------------------------------------------------------------
 
+/** Outputs that produce a downloadable artifact ("structured" stays inline). */
+const ARTIFACT_OUTPUTS: readonly PerceiveOutputName[] = [
+  "markdown",
+  "html_cleaned",
+  "html_raw",
+  "screenshot",
+  "screenshot_full_page",
+  "pdf",
+  "links",
+  "images",
+];
+
+function requireOneArtifactOutput(method: string, outputs?: PerceiveOutputName[]): void {
+  // Server default when outputs is omitted: ["markdown", "structured"].
+  const effective: PerceiveOutputName[] = outputs ?? ["markdown", "structured"];
+  const artifactCount = effective.filter((o) => ARTIFACT_OUTPUTS.includes(o)).length;
+  if (artifactCount !== 1) {
+    throw new Error(
+      `${method}: direct download requires exactly one artifact-producing output ` +
+        `(${ARTIFACT_OUTPUTS.join(", ")})`,
+    );
+  }
+}
+
 function serializePerceiveOptions(o: PerceiveOptions): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (o.outputs !== undefined) out.outputs = o.outputs;
   if (o.extract !== undefined) out.extract = o.extract;
+  if (o.onlyMainContent !== undefined) out.only_main_content = o.onlyMainContent;
   if (o.schema !== undefined) out.schema = o.schema;
   if (o.waitFor !== undefined) out.wait_for = o.waitFor;
   if (o.waitTimeoutMs !== undefined) out.wait_timeout_ms = o.waitTimeoutMs;
@@ -443,6 +517,7 @@ function serializePerceiveOptions(o: PerceiveOptions): Record<string, unknown> {
   if (o.blockResources !== undefined) out.block_resources = o.blockResources;
   if (o.respectRobots !== undefined) out.respect_robots = o.respectRobots;
   if (o.mobile !== undefined) out.mobile = o.mobile;
+  if (o.directDownload !== undefined) out.direct_download = o.directDownload;
   return out;
 }
 
@@ -527,6 +602,8 @@ function toPerceiveResult(d: Record<string, unknown>): PerceiveResult {
     urlFinal: optStr(d.url_final),
     contentHash: optStr(d.content_hash),
     renderQuality: optNum(d.render_quality),
+    statusCode: optNum(d.status_code),
+    deductions: optObj(d.deductions) as Record<string, number> | undefined,
     cacheHit: d.cache_hit === true,
     outputs,
     structured: optObj(d.structured),
@@ -534,8 +611,44 @@ function toPerceiveResult(d: Record<string, unknown>): PerceiveResult {
     tokens: toTokens(d.tokens),
     costCents: num(d.cost_cents),
     durationMs: optNum(d.duration_ms),
+    optionsEcho: optObj(d.options_echo),
     error: optStr(d.error),
     warnings: strArr(d.warnings),
+  };
+}
+
+function headerFloat(v: string | null): number | undefined {
+  if (v === null) return undefined;
+  const parsed = Number.parseFloat(v);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function headerInt(v: string | null): number | undefined {
+  if (v === null) return undefined;
+  const parsed = Number.parseInt(v, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+}
+
+function filenameFromDisposition(header: string | null): string | undefined {
+  if (!header) return undefined;
+  const match = /filename="?([^";]+)"?/i.exec(header);
+  return match ? match[1] : undefined;
+}
+
+async function toPerceiveDirectResult(resp: Response): Promise<PerceiveDirectResult> {
+  const content = new Uint8Array(await resp.arrayBuffer());
+  const h = resp.headers;
+  return {
+    content,
+    contentType: h.get("content-type") ?? "application/octet-stream",
+    filename: filenameFromDisposition(h.get("content-disposition")),
+    operationId: h.get("x-operation-id") ?? "",
+    objectKey: h.get("x-object-key") ?? "",
+    cacheHit: h.get("x-cache-hit") === "true",
+    renderQuality: headerFloat(h.get("x-render-quality")),
+    sourceStatusCode: headerInt(h.get("x-source-status-code")),
+    contentHash: h.get("x-content-hash") ?? undefined,
+    warningsCount: headerInt(h.get("x-warnings-count")) ?? 0,
   };
 }
 

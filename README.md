@@ -54,6 +54,14 @@ const batch = await client.v2.perceiveBatch(["https://a.com", "https://b.com"], 
   outputMode: "zip",
 });
 const done = await client.v2.getPerceiveBatch(batch.jobId);
+
+// Direct download: the response body IS the artifact bytes (no signed URL).
+// Requires exactly one artifact-producing output; metadata rides in headers.
+const direct = await client.v2.perceiveDirect("https://example.com", { outputs: ["markdown"] });
+console.log(direct.filename, direct.contentType, direct.content.byteLength);
+
+// Re-download a stored artifact from an earlier operation:
+const raw = await client.v2.downloadPerceiveArtifact(op.operationId, "markdown");
 ```
 
 ### Discover: enumerate a site's URLs (no rendering)
