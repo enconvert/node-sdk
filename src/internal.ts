@@ -24,8 +24,16 @@ export async function raiseForStatus(resp: Response): Promise<void> {
   }
   if (resp.status === 401 || resp.status === 403) throw new AuthenticationError(message);
   if (resp.status === 402) throw new QuotaError(message);
-  if (resp.status === 429) throw new RateLimitError(message);
+  if (resp.status === 429) throw new RateLimitError(message, retryAfterSeconds(resp));
   throw new APIError(resp.status, message);
+}
+
+// ponytail: delay-seconds form only; the gateway never sends the HTTP-date form.
+function retryAfterSeconds(resp: Response): number | undefined {
+  const raw = resp.headers.get("retry-after");
+  if (raw === null) return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isNaN(seconds) ? undefined : seconds;
 }
 
 export function serializePdfOptions(o: PdfOptions): Record<string, unknown> {

@@ -567,6 +567,10 @@ function strArr(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 
+function optBool(v: unknown): boolean | undefined {
+  return typeof v === "boolean" ? v : undefined;
+}
+
 function optObj(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
@@ -604,6 +608,8 @@ function toPerceiveResult(d: Record<string, unknown>): PerceiveResult {
     renderQuality: optNum(d.render_quality),
     statusCode: optNum(d.status_code),
     deductions: optObj(d.deductions) as Record<string, number> | undefined,
+    isBlocked: optBool(d.is_blocked),
+    billed: optBool(d.billed),
     cacheHit: d.cache_hit === true,
     outputs,
     structured: optObj(d.structured),

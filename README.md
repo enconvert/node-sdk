@@ -34,6 +34,8 @@ The V2 namespace turns web pages into agent-ready data: render, search, extract,
 
 Every render carries `renderQuality` (0.0-1.0). A low score means the page didn't render cleanly (challenge page, cookie wall, empty shell); the content is still returned, flagged, so a bad read never quietly enters your agent's context.
 
+A content-free block (challenge page, bot wall) comes back as HTTP 200 with `isBlocked: true`, empty `outputs` and `billed: false`; reads whose `deductions` include `http_error` or `login_wall` are also unbilled. Treat `renderQuality` under 0.40 as not-content.
+
 ### Perceive: render a URL into artifacts
 
 ```ts

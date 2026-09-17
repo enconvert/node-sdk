@@ -102,4 +102,4 @@ export type {
   WebhookSecret,
 } from "./v2-types.js";
 
-export const VERSION = "0.2.0";
+export { VERSION } from "./version.js";

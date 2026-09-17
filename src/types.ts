@@ -88,6 +88,12 @@ export interface ClientOptions {
   timeout?: number;
   /** Override the API base URL. Defaults to https://api.enconvert.com */
   baseUrl?: string;
+  /**
+   * User-Agent sent on every API request, used for traffic attribution.
+   * Defaults to `enconvert-sdk/<version> (node)`. Tools built on the SDK
+   * (MCP server, CLI) override this to identify themselves.
+   */
+  userAgent?: string;
 }
 
 /** Options shared by all URL-based conversions (single page and website). */

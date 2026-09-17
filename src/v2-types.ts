@@ -141,6 +141,13 @@ export interface PerceiveResult {
   statusCode?: number | null;
   /** Named render-quality deductions that fired, e.g. {http_error: 0.7}. */
   deductions?: Record<string, number>;
+  /**
+   * True when the page was a content-free block (challenge, bot wall).
+   * Such reads return HTTP 200 with empty outputs and are not billed.
+   */
+  isBlocked?: boolean;
+  /** False when the read was not charged (blocked, http_error or login_wall). */
+  billed?: boolean;
   cacheHit: boolean;
   /** Keyed by output name (e.g. "markdown", "screenshot_full_page"). */
   outputs: Record<string, V2OutputArtifact>;

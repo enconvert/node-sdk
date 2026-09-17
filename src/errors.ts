@@ -28,9 +28,13 @@ export class AuthenticationError extends APIError {
 }
 
 export class RateLimitError extends APIError {
-  constructor(message = "Rate limit exceeded") {
+  /** Seconds to wait, from the Retry-After header; undefined when absent. */
+  readonly retryAfter?: number;
+
+  constructor(message = "Rate limit exceeded", retryAfter?: number) {
     super(429, message);
     this.name = "RateLimitError";
+    this.retryAfter = retryAfter;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

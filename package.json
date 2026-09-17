@@ -3,7 +3,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "JavaScript / TypeScript SDK for EnConvert: read any page or file into agent-ready Markdown, JSON, or screenshots (scored 0.0-1.0), compress images, and convert documents. V2 perception + MCP.",
   "license": "MIT",
   "author": "EnConvert <support@enconvert.com>",
@@ -66,7 +66,7 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test:sdk": "tsx tests/test_sdk.ts",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "lint:pkg": "publint && attw --pack .",
     "prepublishOnly": "npm run build && npm run lint:pkg"
   },

@@ -29,6 +29,7 @@ import {
   type FilePart,
 } from "./internal.js";
 import { EnconvertV2 } from "./v2.js";
+import { VERSION } from "./version.js";
 import type {
   BatchStatus,
   BatchSubmission,
@@ -74,6 +75,7 @@ export class Enconvert {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly timeout: number;
+  private readonly userAgent: string;
 
   /**
    * V2 API namespace: perceive, discover, lookup, distill, ingest, watch.
@@ -86,6 +88,7 @@ export class Enconvert {
     this.apiKey = opts.apiKey;
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.timeout = opts.timeout ?? DEFAULT_TIMEOUT_MS;
+    this.userAgent = opts.userAgent ?? `enconvert-sdk/${VERSION} (node)`;
     this.v2 = new EnconvertV2((path, init) => this.fetch(path, init));
   }
 
@@ -466,7 +469,11 @@ export class Enconvert {
       return await fetch(`${this.baseUrl}${path}`, {
         ...init,
         signal: ctrl.signal,
-        headers: { "X-API-Key": this.apiKey, ...(init.headers ?? {}) },
+        headers: {
+          "X-API-Key": this.apiKey,
+          "user-agent": this.userAgent,
+          ...(init.headers ?? {}),
+        },
       });
     } finally {
       clearTimeout(t);
